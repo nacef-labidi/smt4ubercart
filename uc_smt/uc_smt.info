@@ -1,0 +1,7 @@
+name = SMT
+description = Integratioon de la plateforme de paiement SPS de la Société Monétique Tunisie.
+dependencies[] = uc_payment
+package = Ubercart - payment
+core = 6.x
+php = 5.0
+version = "6.x-1.0"

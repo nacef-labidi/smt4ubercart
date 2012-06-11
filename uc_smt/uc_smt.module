@@ -1,0 +1,154 @@
+<?php
+
+function uc_smt_menu() {
+  $items['uc_smt/notification'] = array(
+    'title' => 'Notification SMT',
+    'page callback' => 'uc_smt_notification',
+    'access callback' => 'uc_smt_notification_access',
+    'type' => MENU_CALLBACK
+  );
+
+  $items['uc_smt/complete'] = array(
+    'title' => 'SMT Payment Complete',
+    'page callback' => 'uc_smt_complete',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK
+  );
+
+  $items['uc_smt/cancel'] = array(
+    'title' => 'SPS payment cancelled',
+    'page callback' => 'uc_smt_cancel',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK
+  );
+
+  return $items;
+}
+
+function uc_smt_notification() {
+  $reference = $_GET['Reference'];
+  $action = $_GET['Action'];
+  $param = $_GET['Param'];
+
+  switch($action) {
+    case "DETAIL":
+      if ($order = uc_order_load(intval($reference))) {
+        echo "Reference=".$reference."&Action=".$action."&Reponse=".$order->order_total;
+      }
+      break;
+
+    case "ERREUR":
+      echo "Reference=".$reference. "&Action=".$action."&Reponse=OK";
+      break;
+
+    case "ACCORD":
+      $order = uc_order_load(intval($reference));
+      $comment = t('SPS transaction ID: @txn_id', array('@txn_id' => $param));
+      uc_payment_enter(intval($reference), 'smt', $order->order_total, $order->uid, NULL, $comment);
+      uc_cart_complete_sale($order);
+      uc_order_comment_save($order_id, 0, t('Payment of @amount submitted through SPS.', array('@amount' => $order->order_total)), 'order', 'payment_received');
+      echo "Reference=".$reference. "&Action=".$action."&Reponse=OK";
+      break;
+
+    case "REFUS":
+      echo "Reference=".$reference. "&Action=".$action."&Reponse=OK";
+      break;
+
+    case "ANNULATION":
+      echo "Reference=".$reference. "&Action=".$action."&Reponse=OK";
+      break;
+  }
+}
+
+function uc_smt_notification_access() {
+  return TRUE;
+}
+
+function uc_smt_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'uc_cart_checkout_review_form' && ($order_id = intval($_SESSION['cart_order'])) > 0) {
+    $order = uc_order_load($order_id);
+
+    if ($order->payment_method == 'smt') {
+      unset($form['submit']);
+      $form['#prefix'] = '<table style="display: inline; padding-top: 1em;"><tr><td>';
+      $form['#suffix'] = '</td><td>'. drupal_get_form('uc_smt_form', $order) .'</td></tr></table>';
+    }
+  }
+}
+
+function uc_smt_payment_method() {
+  $methods[] = array(
+    'id' => 'smt',
+    'name' => t('SPS - SMT'),
+    'title' => 'SPS - SMT : Paiement par carte bancaire Monétique Tunisie',
+    'review' => t('SMT'),
+    'desc' => t('Redirection vers le serveur de paiement SPS.'),
+    'callback' => 'uc_payment_method_smt',
+    'weight' => 1,
+    'checkout' => FALSE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+function uc_payment_method_smt($op, &$arg1) {
+  switch($op) {
+    case 'settings':
+      $form['uc_smt_affilie'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Code d\'affiliation SMT'),
+        '#description' => t('Code d\'affiliation au service SPS fourni par votre banque.'),
+        '#default_value' => variable_get('uc_smt_affilie', ''),
+      );
+      $form['uc_smt_server'] = array(
+        '#type' => 'select',
+        '#title' => t('Serveur SPS'),
+        '#description' => t('Choix du serveur SPS Test/Production.'),
+        '#options' => array(
+          'http://196.203.10.190/paiement/' => ('Test'),
+          'https://www.smt-sps.com.tn/paiement/' => ('Production'),
+        ),
+        '#default_value' => variable_get('uc_smt_server', 'http://196.203.10.190/paiement/'),
+      );
+      return $form;
+  }
+}
+
+function uc_smt_form($form_state, $order) {
+  $data = array(
+    'affilie' => variable_get('uc_smt_affilie'),
+    'Devise' => variable_get('uc_currency_code'),
+    'Reference' => str_pad($order->order_id, 10, "0", STR_PAD_LEFT),
+    'Montant' => str_replace('.', ',', trim(sprintf('%12.3f',$order->order_total))),
+    'sid' => session_id()
+  );
+
+  $form['#action'] = variable_get('uc_smt_server', 'http://196.203.10.190/paiement/');
+
+  foreach ($data as $name => $value) {
+    if (!empty($value)) {
+      $form[$name] = array('#type' => 'hidden', '#value' => $value);
+    }
+  }
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit Order'),
+  );
+
+  return $form;
+}
+
+function uc_smt_complete($order) {
+  $_SESSION['do_complete'] = TRUE;
+  drupal_goto('cart/checkout/complete');
+}
+
+function uc_smt_cancel() {
+  unset($_SESSION['cart_order']);
+
+  drupal_set_message(t('Your SPS payment was cancelled. Please feel free to continue shopping or contact us for assistance.'));
+
+  drupal_goto(variable_get('uc_smt_cancel_return_url', 'cart'));
+}
